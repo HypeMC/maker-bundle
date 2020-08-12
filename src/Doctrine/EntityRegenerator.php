@@ -61,19 +61,27 @@ final class EntityRegenerator
         foreach ($metadata as $classMetadata) {
             if (!class_exists($classMetadata->name)) {
                 // the class needs to be generated for the first time!
-                $classPath = $this->generateClass($classMetadata);
+                $entityPath = $this->generateClass($classMetadata);
             } else {
-                $classPath = $this->getPathOfClass($classMetadata->name);
+                $entityPath = $this->getPathOfClass($classMetadata->name);
             }
 
             $mappedFields = $this->getMappedFieldsInEntity($classMetadata);
 
+            $repositoryPath = null;
             if ($classMetadata->customRepositoryClassName) {
-                $this->generateRepository($classMetadata);
+                if (!class_exists($classMetadata->customRepositoryClassName)) {
+                    // the repository needs to be generated for the first time!
+                    $repositoryPath = $this->generateRepository($classMetadata);
+                } else {
+                    $repositoryPath = $this->getPathOfClass($classMetadata->customRepositoryClassName);
+                }
             }
 
-            $manipulator = $this->createClassManipulator($classPath);
-            $operations[$classPath] = $manipulator;
+            $entityManipulator = $this->createClassManipulator($entityPath);
+            $repositoryManipulator = $this->createClassManipulator($repositoryPath);
+            $operations[$entityPath] = $entityManipulator;
+            $operations[$repositoryPath] = $repositoryManipulator;
 
             $embeddedClasses = [];
 
@@ -88,7 +96,7 @@ final class EntityRegenerator
 
                 $operations[$embeddedClasses[$fieldName]] = $this->createClassManipulator($embeddedClasses[$fieldName]);
 
-                $manipulator->addEmbeddedEntity($fieldName, $className);
+                $entityManipulator->addEmbeddedEntity($fieldName, $className);
             }
 
             foreach ($classMetadata->fieldMappings as $fieldName => $mapping) {
@@ -105,7 +113,8 @@ final class EntityRegenerator
                     continue;
                 }
 
-                $manipulator->addEntityField($fieldName, $mapping);
+                $entityManipulator->addEntityField($fieldName, $mapping);
+                $repositoryManipulator->addEntityRepositoryAtMethodDocBlockForField($fieldName, $mapping, $classMetadata->name);
             }
 
             $getIsNullable = function (array $mapping) {
@@ -132,7 +141,7 @@ final class EntityRegenerator
                             ->setMapInverseRelation(null !== $mapping['inversedBy'])
                         ;
 
-                        $manipulator->addManyToOneRelation($relation);
+                        $entityManipulator->addManyToOneRelation($relation);
 
                         break;
                     case ClassMetadata::ONE_TO_MANY:
@@ -143,7 +152,7 @@ final class EntityRegenerator
                             ->setOrphanRemoval($mapping['orphanRemoval'])
                         ;
 
-                        $manipulator->addOneToManyRelation($relation);
+                        $entityManipulator->addOneToManyRelation($relation);
 
                         break;
                     case ClassMetadata::MANY_TO_MANY:
@@ -155,7 +164,7 @@ final class EntityRegenerator
                             ->setMapInverseRelation($mapping['isOwningSide'] ? (null !== $mapping['inversedBy']) : true)
                         ;
 
-                        $manipulator->addManyToManyRelation($relation);
+                        $entityManipulator->addManyToManyRelation($relation);
 
                         break;
                     case ClassMetadata::ONE_TO_ONE:
@@ -168,7 +177,7 @@ final class EntityRegenerator
                             ->setIsNullable($getIsNullable($mapping))
                         ;
 
-                        $manipulator->addOneToOneRelation($relation);
+                        $entityManipulator->addOneToOneRelation($relation);
 
                         break;
                     default:
@@ -177,10 +186,10 @@ final class EntityRegenerator
             }
         }
 
-        foreach ($operations as $filename => $manipulator) {
+        foreach ($operations as $filename => $entityManipulator) {
             $this->fileManager->dumpFile(
                 $filename,
-                $manipulator->getSourceCode()
+                $entityManipulator->getSourceCode()
             );
         }
     }
@@ -226,13 +235,15 @@ final class EntityRegenerator
             return;
         }
 
-        $this->entityClassGenerator->generateRepositoryClass(
+        $path = $this->entityClassGenerator->generateRepositoryClass(
             $metadata->customRepositoryClassName,
             $metadata->name,
             false
         );
 
         $this->generator->writeChanges();
+
+        return $path;
     }
 
     private function getMappedFieldsInEntity(ClassMetadata $classMetadata)

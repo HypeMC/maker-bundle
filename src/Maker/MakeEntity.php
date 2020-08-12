@@ -160,6 +160,12 @@ final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
             'Entity\\'
         );
 
+        $repoClassDetails = $generator->createClassNameDetails(
+            $input->getArgument('name'),
+            'Repository\\',
+            'Repository'
+        );
+
         $classExists = class_exists($entityClassDetails->getFullName());
         if (!$classExists) {
             $broadcast = $input->getOption('broadcast');
@@ -203,8 +209,11 @@ final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
             ]);
         }
 
+        $repositoryPath = $this->getPathOfClass($repoClassDetails->getFullName());
+
         $currentFields = $this->getPropertyNames($entityClassDetails->getFullName());
-        $manipulator = $this->createClassManipulator($entityPath, $io, $overwrite);
+        $entityManipulator = $this->createClassManipulator($entityPath, $io, $overwrite);
+        $repositoryManipulator = $this->createClassManipulator($repositoryPath, $io, $overwrite);
 
         $isFirstField = true;
         while (true) {
@@ -216,12 +225,14 @@ final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
             }
 
             $fileManagerOperations = [];
-            $fileManagerOperations[$entityPath] = $manipulator;
+            $fileManagerOperations[$entityPath] = $entityManipulator;
+            $fileManagerOperations[$repositoryPath] = $repositoryManipulator;
 
             if (\is_array($newField)) {
                 $annotationOptions = $newField;
                 unset($annotationOptions['fieldName']);
-                $manipulator->addEntityField($newField['fieldName'], $annotationOptions);
+                $entityManipulator->addEntityField($newField['fieldName'], $annotationOptions);
+                $repositoryManipulator->addEntityRepositoryAtMethodDocBlockForField($newField['fieldName'], $annotationOptions, $entityClassDetails->getFullName());
 
                 $currentFields[] = $newField['fieldName'];
             } elseif ($newField instanceof EntityRelation) {
@@ -229,7 +240,7 @@ final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
                 $newFieldName = $newField->getOwningProperty();
                 if ($newField->isSelfReferencing()) {
                     $otherManipulatorFilename = $entityPath;
-                    $otherManipulator = $manipulator;
+                    $otherManipulator = $entityManipulator;
                 } else {
                     $otherManipulatorFilename = $this->getPathOfClass($newField->getInverseClass());
                     $otherManipulator = $this->createClassManipulator($otherManipulatorFilename, $io, $overwrite);
@@ -238,7 +249,7 @@ final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
                     case EntityRelation::MANY_TO_ONE:
                         if ($newField->getOwningClass() === $entityClassDetails->getFullName()) {
                             // THIS class will receive the ManyToOne
-                            $manipulator->addManyToOneRelation($newField->getOwningRelation());
+                            $entityManipulator->addManyToOneRelation($newField->getOwningRelation());
 
                             if ($newField->getMapInverseRelation()) {
                                 $otherManipulator->addOneToManyRelation($newField->getInverseRelation());
@@ -254,19 +265,20 @@ final class MakeEntity extends AbstractMaker implements InputAwareMakerInterface
                             if (!$newField->getMapInverseRelation()) {
                                 throw new \Exception('Somehow a OneToMany relationship is being created, but the inverse side will not be mapped?');
                             }
-                            $manipulator->addOneToManyRelation($newField->getInverseRelation());
+                            $entityManipulator->addOneToManyRelation($newField->getInverseRelation());
                         }
 
                         break;
                     case EntityRelation::MANY_TO_MANY:
-                        $manipulator->addManyToManyRelation($newField->getOwningRelation());
+                        $entityManipulator->addManyToManyRelation($newField->getOwningRelation());
                         if ($newField->getMapInverseRelation()) {
                             $otherManipulator->addManyToManyRelation($newField->getInverseRelation());
                         }
 
                         break;
                     case EntityRelation::ONE_TO_ONE:
-                        $manipulator->addOneToOneRelation($newField->getOwningRelation());
+                        $entityManipulator->addOneToOneRelation($relation = $newField->getOwningRelation());
+                        $repositoryManipulator->addEntityRepositoryAtMethodDocBlockForRelation($relation, $newField->getOwningClass());
                         if ($newField->getMapInverseRelation()) {
                             $otherManipulator->addOneToOneRelation($newField->getInverseRelation());
                         }
