@@ -1113,6 +1113,8 @@ final class ClassSourceManipulator
                 return '\\'.\DateInterval::class;
 
             case 'object':
+                return \PHP_VERSION_ID < 70200 ? null : 'object';
+
             case 'binary':
             case 'blob':
             default:
